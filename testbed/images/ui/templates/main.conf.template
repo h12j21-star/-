@@ -1,0 +1,38 @@
+server {
+   listen 443 ssl;
+   server_name ${ADMIN_MAIN_DOMAIN_ADDRESS};
+   client_max_body_size 0;
+
+   ssl_certificate     /etc/pki/nginx/fullchain.pem;
+   ssl_certificate_key /etc/pki/nginx/privkey.pem;
+   ssl_session_cache   shared:SSL:10m;
+   ssl_session_timeout 10m;
+
+   resolver 127.0.0.11 valid=10s ipv6=off;
+   set $agent_server ${ADMIN_AGENT_URL};
+   set $manager_server ${ADMIN_MANGER_URL};
+
+   location /health-check {
+     access_log off;
+     return 200 "healthy\n";
+   }
+
+   location /api/ {
+     proxy_pass $manager_server;
+     proxy_set_header Host $host;
+     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+     rewrite  ^/api(.*)$ $1 break;
+     client_max_body_size 0;
+     # 장비 commit 이 긴 벤더(Palo Alto 등)의 동기 send/apply 가 60s 기본값에 504 로 끊기지 않게
+     proxy_read_timeout 600s;
+     proxy_send_timeout 600s;
+   }
+
+   location / {
+     try_files $uri $uri/ /index.html;
+     root /usr/share/nginx/html/certbear-ui;
+     index   index.html index.htm;
+     expires 60m;
+     add_header Cache-Control "public";
+   }
+}

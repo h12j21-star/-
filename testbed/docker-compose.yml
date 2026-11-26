@@ -1,0 +1,206 @@
+# CertBear 테스트베드. 제어 페이지만 띄우면 나머지는 페이지에서 ON/OFF 한다:
+#   docker compose up -d --build control   →  http://localhost:7000
+# 모듈을 직접 다룰 때:
+#   docker compose --profile admin up -d --build
+name: certbear-testbed
+
+x-common: &common
+  restart: unless-stopped
+  networks: [certbear]
+
+x-target: &target
+  <<: *common
+  profiles: [targets]
+  environment:
+    ADMIN_ADDRESS: ${AGENT_ADMIN_ADDRESS:-https://certbear.admin:6681}
+    TZ: Asia/Seoul
+
+services:
+  control:
+    build: ./control
+    container_name: certbear.control
+    restart: unless-stopped
+    ports:
+      - "${CONTROL_PORT:-7000}:7000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/testbed
+      - ${ADMIN_SRC:-../../certbear-admin}:/src/certbear-admin:ro
+      - ${UI_SRC:-../../certbear-ui}:/src/certbear-ui:ro
+      - ${AGENT_SRC:-../../certbear-agent}:/src/certbear-agent:ro
+    environment:
+      ADMIN_SRC: /src/certbear-admin
+      UI_SRC: /src/certbear-ui
+      AGENT_SRC: /src/certbear-agent
+
+  db:
+    <<: *common
+    profiles: [admin]
+    build: ./images/db
+    image: certbear-testbed/db
+    container_name: certbear.postgres
+    environment:
+      POSTGRES_DB: certbear
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-certbear-test}
+    ports:
+      - "127.0.0.1:${DB_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # certbear-admin Dockerfile 은 사내 레지스트리의 base 이미지를 FROM 한다.
+  # 같은 이름을 로컬 빌드(certbear-infra/admin/Dockerfile.base 사본)로 덮어써 레지스트리 없이 빌드한다.
+  admin-base:
+    profiles: [build-only]
+    build: ./images/admin-base
+    image: certbear-testbed/admin-base
+
+  admin:
+    <<: *common
+    profiles: [admin]
+    build:
+      context: ${ADMIN_SRC:-../../certbear-admin}
+      additional_contexts:
+        # 키에 태그(:latest)를 붙이면 compose 가 무시한다
+        osori.kr-central-2.kcr.dev/certbear/certbear-admin-base: service:admin-base
+    image: certbear-testbed/admin
+    container_name: certbear.admin
+    # 호스트명이 묶인 데모 라이선스를 쓸 수 있도록 고정
+    hostname: certbear-admin
+    depends_on:
+      db:
+        condition: service_healthy
+    # 운영(demo)과 같은 경로 — synchronize 대신 migration:run 으로 스키마·시드(admin/admin)를 만든다
+    command: ["sh", "-c", "./certbear-admin migration:run && exec ./certbear-admin"]
+    init: true
+    environment:
+      TZ: Asia/Seoul
+      NODE_ENV: dev
+      CERTBEAR_ADMIN_DB_HOST: certbear.postgres
+      CERTBEAR_ADMIN_DB_PORT: 5432
+      CERTBEAR_ADMIN_DB_USERNAME: postgres
+      CERTBEAR_ADMIN_DB_PASSWORD: ${DB_PASSWORD:-certbear-test}
+      CERTBEAR_ADMIN_DB_DATABASE: certbear
+      CERTBEAR_ADMIN_DB_SYNCHRONIZE: "false"
+      CERTBEAR_ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-certbear-testbed-jwt}
+      CERTBEAR_ADMIN_ENCRYPTION_KEY: ${ADMIN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      CERTBEAR_ADMIN_SUPER_ADMIN_EMAIL: ${ADMIN_SUPER_ADMIN_EMAIL:-}
+      CERTBEAR_ADMIN_AGENT_PUBLIC_ADDRESS: ${AGENT_ADMIN_ADDRESS:-https://certbear.admin:6681}
+      CERTBEAR_ADMIN_LOG_LEVEL: ${ADMIN_LOG_LEVEL:-debug}
+      CERTBEAR_ADMIN_SWAGGER_ENABLED: "true"
+      CERTBEAR_LICENSE_FILE: /app/license/license.dat
+    ports:
+      - "${ADMIN_MANAGER_PORT:-6680}:6680"
+      - "${ADMIN_AGENT_PORT:-6681}:6681"
+    volumes:
+      - admin_license:/app/license
+    healthcheck:
+      test: ["CMD", "curl", "-sfk", "https://localhost:6680/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  ui:
+    <<: *common
+    profiles: [ui]
+    build:
+      context: ./images/ui
+      additional_contexts:
+        ui-src: ${UI_SRC:-../../certbear-ui}
+    image: certbear-testbed/ui
+    container_name: certbear.ui
+    environment:
+      ADMIN_MAIN_DOMAIN_ADDRESS: localhost
+      ADMIN_MANGER_URL: https://certbear.admin:6680
+      ADMIN_AGENT_URL: https://certbear.admin:6681
+      ACCESS_LOG_FORMAT: vhost
+      ERROR_LOG_LEVEL: warn
+    ports:
+      - "${UI_PORT:-8443}:443"
+
+  # 에이전트가 설치된 대상 서버 4대. 웹서버와 에이전트가 한 컨테이너에서 돈다(파일 스캔·재기동 때문).
+  target-nginx-1:
+    <<: *target
+    build: &target-nginx-build
+      context: ./images/target
+      target: nginx
+      additional_contexts:
+        agent-src: ${AGENT_SRC:-../../certbear-agent}
+    image: certbear-testbed/target-nginx
+    container_name: certbear.target-nginx-1
+    hostname: target-nginx-1
+    ports:
+      - "${TARGET_NGINX_1_PORT:-9441}:443"
+
+  target-nginx-2:
+    <<: *target
+    build: *target-nginx-build
+    image: certbear-testbed/target-nginx
+    container_name: certbear.target-nginx-2
+    hostname: target-nginx-2
+    ports:
+      - "${TARGET_NGINX_2_PORT:-9442}:443"
+
+  target-apache:
+    <<: *target
+    build:
+      context: ./images/target
+      target: apache
+      additional_contexts:
+        agent-src: ${AGENT_SRC:-../../certbear-agent}
+    image: certbear-testbed/target-apache
+    container_name: certbear.target-apache
+    hostname: target-apache
+    ports:
+      - "${TARGET_APACHE_PORT:-9443}:443"
+
+  target-tomcat:
+    <<: *target
+    build:
+      context: ./images/target
+      target: tomcat
+      additional_contexts:
+        agent-src: ${AGENT_SRC:-../../certbear-agent}
+    image: certbear-testbed/target-tomcat
+    container_name: certbear.target-tomcat
+    hostname: target-tomcat
+    ports:
+      - "${TARGET_TOMCAT_PORT:-9444}:8443"
+
+  k8s:
+    <<: *common
+    profiles: [k8s]
+    build: ./images/k3s
+    image: certbear-testbed/k3s
+    container_name: certbear.k3s
+    hostname: certbear.k3s
+    privileged: true
+    command: ["server", "--disable=traefik", "--tls-san=certbear.k3s", "--tls-san=localhost"]
+    ports:
+      - "${K8S_API_PORT:-16443}:6443"
+    volumes:
+      - k3s_data:/var/lib/rancher/k3s
+
+  aws:
+    <<: *common
+    profiles: [aws]
+    build: ./images/aws
+    image: certbear-testbed/aws
+    container_name: certbear.aws
+    ports:
+      - "${AWS_PORT:-14566}:443"
+
+volumes:
+  postgres_data:
+  admin_license:
+  k3s_data:
+
+networks:
+  certbear:
+    name: certbear-testbed

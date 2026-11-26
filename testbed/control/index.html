@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CertBear 테스트베드</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2330; --muted: #677285; --border: #e1e5ec;
+    --on: #1f9d55; --starting: #c98a04; --partial: #d9730d; --off: #9aa3b2;
+    --accent: #2f6fde; --accent-text: #ffffff; --danger: #c43d3d; --code: #0f1420; --code-text: #d7deea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161f; --card: #1a202b; --text: #e6eaf2; --muted: #95a0b3; --border: #2a3242;
+      --off: #5d6779; --accent: #5b8ff0; --code: #0b0f17;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  header { padding: 20px 24px 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; justify-content: space-between; }
+  h1 { margin: 0; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .bulk { display: flex; gap: 8px; }
+  main { padding: 8px 24px 40px; max-width: 1200px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 24px 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .name { font-weight: 600; font-size: 15px; flex: 1; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--off); flex: none; }
+  .dot.on { background: var(--on); } .dot.starting { background: var(--starting); } .dot.partial { background: var(--partial); }
+  .state { font-size: 12px; color: var(--muted); }
+  .desc { color: var(--muted); font-size: 13px; }
+  .services { font-size: 12px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+  .links, .actions { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.toggle { min-width: 64px; font-weight: 600; background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.toggle.off { background: transparent; color: var(--danger); border-color: var(--danger); }
+  .busy { font-size: 12px; color: var(--starting); }
+  .fail { font-size: 12px; color: var(--danger); }
+  dialog { width: min(1000px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 10px; padding: 0; background: var(--card); color: var(--text); }
+  dialog header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  pre { margin: 0; padding: 12px 16px; max-height: 70vh; overflow: auto; background: var(--code); color: var(--code-text); font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+  @media (max-width: 480px) { header, main { padding-left: 16px; padding-right: 16px; } .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>CertBear 테스트베드</h1>
+    <div class="sub">모듈별 ON/OFF · 처음 켤 때는 이미지 빌드로 수 분 걸립니다 (진행 로그 버튼으로 확인)</div>
+  </div>
+  <div class="bulk">
+    <button id="all-on">전체 ON</button>
+    <button id="all-off">전체 OFF</button>
+  </div>
+</header>
+<main id="root"></main>
+
+<dialog id="viewer">
+  <header class="row"><strong id="viewer-title" style="flex:1"></strong><button id="viewer-close">닫기</button></header>
+  <pre id="viewer-body"></pre>
+</dialog>
+
+<script>
+const STATE_LABEL = { on: '실행 중', starting: '기동 중', partial: '일부 실행', off: '꺼짐' };
+const root = document.getElementById('root');
+const viewer = document.getElementById('viewer');
+let modules = [];
+let liveJob = null;
+
+const api = (path, method = 'GET') => fetch(path, { method }).then((r) => r.json());
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  Object.entries(attrs).forEach(([key, value]) => {
+    if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== undefined && value !== null) node.setAttribute(key, value);
+  });
+  children.flat().forEach((child) => child != null && node.append(child));
+  return node;
+}
+
+function card(module) {
+  const isOn = module.status !== 'off';
+  const busy = module.job && module.job.running;
+  const failed = module.job && !module.job.running && module.job.exitCode !== 0 && module.job.exitCode !== null;
+  return el('div', { class: 'card' },
+    el('div', { class: 'row' },
+      el('span', { class: `dot ${module.status}` }),
+      el('span', { class: 'name' }, module.name),
+      el('span', { class: 'state' }, STATE_LABEL[module.status]),
+      el('button', {
+        class: `toggle ${isOn ? 'off' : ''}`,
+        disabled: busy ? '' : null,
+        onclick: () => toggle(module, isOn ? 'off' : 'on'),
+      }, isOn ? 'OFF' : 'ON'),
+    ),
+    el('div', { class: 'desc' }, module.description),
+    el('div', { class: 'services' }, module.services.map((s) => `${s.name}: ${s.status || s.state}`).join('  ·  ')),
+    busy ? el('div', { class: 'busy' }, `${module.job.action === 'on' ? '빌드/기동' : '중지'} 진행 중…`) : null,
+    failed ? el('div', { class: 'fail' }, `마지막 작업 실패 (exit ${module.job.exitCode}) — 진행 로그를 확인하세요`) : null,
+    module.links && module.status !== 'off'
+      ? el('div', { class: 'links' }, module.links.map((l) => el('a', { href: l.url, target: '_blank', rel: 'noopener' }, l.label)))
+      : null,
+    el('div', { class: 'actions' },
+      el('button', { onclick: () => showJob(module) }, '진행 로그'),
+      el('button', { onclick: () => showLogs(module) }, '컨테이너 로그'),
+      (module.actions || []).map((a) => el('button', { onclick: () => runAction(module, a) }, a.label)),
+    ),
+  );
+}
+
+function render() {
+  const groups = [...new Set(modules.map((m) => m.group))];
+  root.replaceChildren(...groups.flatMap((group) => [
+    el('h2', {}, group),
+    el('div', { class: 'grid' }, modules.filter((m) => m.group === group).map(card)),
+  ]));
+}
+
+async function refresh() {
+  try {
+    modules = await api('/api/modules');
+    render();
+  } catch (error) {
+    root.replaceChildren(el('p', { class: 'fail' }, `제어 서버에 연결할 수 없습니다: ${error}`));
+  }
+}
+
+async function toggle(module, verb) {
+  await api(`/api/modules/${module.id}/${verb}`, 'POST');
+  refresh();
+}
+
+function open(title, text) {
+  document.getElementById('viewer-title').textContent = title;
+  const body = document.getElementById('viewer-body');
+  body.textContent = text || '(출력 없음)';
+  body.scrollTop = body.scrollHeight;
+  if (!viewer.open) viewer.showModal();
+}
+
+async function showJob(module) {
+  clearInterval(liveJob);
+  const load = async () => {
+    const job = await api(`/api/modules/${module.id}/job`);
+    open(`${module.name} — 진행 로그${job.running ? ' (진행 중)' : ''}`, job.output);
+    if (!job.running) clearInterval(liveJob);
+  };
+  await load();
+  liveJob = setInterval(load, 2000);
+}
+
+async function showLogs(module) {
+  clearInterval(liveJob);
+  const { output } = await api(`/api/modules/${module.id}/logs`);
+  open(`${module.name} — 컨테이너 로그 (최근 300줄)`, output);
+}
+
+async function runAction(module, action) {
+  clearInterval(liveJob);
+  open(`${module.name} — ${action.label}`, '실행 중…');
+  const { output } = await api(`/api/modules/${module.id}/actions/${action.id}`, 'POST');
+  open(`${module.name} — ${action.label}`, output);
+}
+
+document.getElementById('viewer-close').onclick = () => { clearInterval(liveJob); viewer.close(); };
+viewer.addEventListener('close', () => clearInterval(liveJob));
+document.getElementById('all-on').onclick = async () => {
+  for (const m of modules) if (m.status === 'off') await api(`/api/modules/${m.id}/on`, 'POST');
+  refresh();
+};
+document.getElementById('all-off').onclick = async () => {
+  for (const m of modules) if (m.status !== 'off') await api(`/api/modules/${m.id}/off`, 'POST');
+  refresh();
+};
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

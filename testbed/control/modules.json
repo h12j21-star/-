@@ -1,0 +1,88 @@
+[
+  {
+    "id": "admin",
+    "group": "써트베어",
+    "name": "Admin + DB",
+    "description": "certbear-admin(NestJS) + PostgreSQL. 처음 켤 때 migration:run 으로 스키마와 기본 계정(admin / admin)을 만듭니다.",
+    "services": ["db", "admin"],
+    "links": [
+      { "label": "Manager API (6680)", "url": "https://localhost:6680/health" },
+      { "label": "Swagger", "url": "https://localhost:6680/swagger-api" }
+    ]
+  },
+  {
+    "id": "ui",
+    "group": "써트베어",
+    "name": "UI",
+    "description": "certbear-ui 빌드 결과를 nginx 로 서빙합니다. /api 는 admin:6680 으로 프록시합니다 (certbear-infra 의 nginx 구성과 동일).",
+    "services": ["ui"],
+    "links": [{ "label": "UI 열기", "url": "https://localhost:8443" }]
+  },
+  {
+    "id": "target-nginx-1",
+    "group": "에이전트 서버",
+    "name": "서버 1 · nginx",
+    "description": "nginx + certbear-agent. 인증서: /etc/certbear-test/server.crt · 호스트 포트 9441",
+    "services": ["target-nginx-1"],
+    "links": [{ "label": "https://localhost:9441", "url": "https://localhost:9441" }]
+  },
+  {
+    "id": "target-nginx-2",
+    "group": "에이전트 서버",
+    "name": "서버 2 · nginx",
+    "description": "nginx + certbear-agent. 인증서: /etc/certbear-test/server.crt · 호스트 포트 9442",
+    "services": ["target-nginx-2"],
+    "links": [{ "label": "https://localhost:9442", "url": "https://localhost:9442" }]
+  },
+  {
+    "id": "target-apache",
+    "group": "에이전트 서버",
+    "name": "서버 3 · apache",
+    "description": "Apache httpd + certbear-agent. 인증서: /etc/certbear-test/server.crt · 호스트 포트 9443",
+    "services": ["target-apache"],
+    "links": [{ "label": "https://localhost:9443", "url": "https://localhost:9443" }]
+  },
+  {
+    "id": "target-tomcat",
+    "group": "에이전트 서버",
+    "name": "서버 4 · tomcat",
+    "description": "Tomcat 10(PEM 커넥터) + certbear-agent. 인증서: /etc/certbear-test/server.crt · 호스트 포트 9444",
+    "services": ["target-tomcat"],
+    "links": [{ "label": "https://localhost:9444", "url": "https://localhost:9444" }]
+  },
+  {
+    "id": "k8s",
+    "group": "클라우드",
+    "name": "Kubernetes (k3s)",
+    "description": "admin 에 KUBERNETES 벤더로 등록: API 주소 https://certbear.k3s:6443, 토큰은 아래 버튼. 네임스페이스 certbear-test 에 sample-tls 시크릿과 sample-web 디플로이먼트가 있습니다.",
+    "services": ["k8s"],
+    "actions": [
+      {
+        "id": "token",
+        "label": "SA 토큰 보기",
+        "command": ["docker", "exec", "certbear.k3s", "kubectl", "-n", "certbear-test", "get", "secret", "certbear-admin-token", "-o", "jsonpath={.data.token}"],
+        "decodeBase64": true
+      },
+      {
+        "id": "resources",
+        "label": "리소스 보기",
+        "command": ["docker", "exec", "certbear.k3s", "kubectl", "-n", "certbear-test", "get", "secret,deploy,pod"]
+      }
+    ]
+  },
+  {
+    "id": "aws",
+    "group": "클라우드",
+    "name": "AWS (moto)",
+    "description": "admin 에 AWS 벤더로 등록: Access Key testing / Secret testing / 리전 ap-northeast-2 / 경유 서버(endpoint) https://certbear.aws:443. ACM 인증서 1개와 이를 쓰는 ALB HTTPS 리스너가 미리 만들어져 있습니다.",
+    "services": ["aws"],
+    "actions": [
+      {
+        "id": "seed",
+        "label": "시드 결과 보기",
+        "command": ["docker", "logs", "certbear.aws"],
+        "grep": "[seed]"
+      }
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Server port="8005" shutdown="SHUTDOWN">
+  <Service name="Catalina">
+    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol"
+               maxThreads="50" SSLEnabled="true">
+      <SSLHostConfig>
+        <Certificate certificateFile="/etc/certbear-test/server.crt"
+                     certificateKeyFile="/etc/certbear-test/server.key"
+                     type="RSA" />
+      </SSLHostConfig>
+    </Connector>
+    <Engine name="Catalina" defaultHost="localhost">
+      <Host name="localhost" appBase="webapps" unpackWARs="true" autoDeploy="false" />
+    </Engine>
+  </Service>
+</Server>
